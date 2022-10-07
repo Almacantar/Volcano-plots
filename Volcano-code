@@ -1,0 +1,509 @@
+#libraries to load
+library(BBmisc)
+library(circlize)
+library(corrplot)
+library(data.table)
+library(dynutils)
+library(dplyr)
+library(EnhancedVolcano)
+library(foreign)
+library(ggbeeswarm)
+library(ggcorrplot)
+library(ggfortify)
+library(ggplot2)
+library(ggpubr)
+library(ggrepel)
+library(ggsignif)
+library(gplots)
+library(gtsummary)
+library(hablar)
+library(Hmisc)
+library(lubridate)
+library(pheatmap)
+library(polyPK)
+library(RColorBrewer)
+library(readr)
+library(reshape2)
+library(rstatix)
+library(Rtsne)
+library(scales)
+library(tidyverse)
+library(viridis)
+library(wesanderson)
+
+
+################# heatmap discovery vs validation
+#set directory
+setwd("C:/Users/delbarri/Google Drive/Senior tech/COVID-19 project/Data analysis/R serum")
+
+serum <-read_csv("110520_Irene.csv")
+
+##################################################
+#################################################
+#Volcano plot 1: This is to show which parameters differentiate ward and deteriorating patients based purely on NHS lab and cytokines sampled on admission. I've tried to plot this as a PCA but it didn't work out too well in my hands. If it works well for you, this is an alternative to a volcano plot.
+#####################################################
+######################################################
+
+# Step1: filter out undesired samples and create new column
+
+serum_filter  <- serum %>%
+  dplyr::filter(Disease%in%c("Covid-19"))%>%
+  dplyr::filter(Retrovirus%in%c("0"))%>%
+  dplyr::filter(is.na(`Admission_sample_N[0]_or_Y[1]`)|`Admission_sample_N[0]_or_Y[1]`%in%c("1"))%>%
+  mutate(group_IP10 = case_when(`AV_IP10`>=473 ~ "High",`AV_IP10`<473 ~ "Low"))       
+
+#Step2: select the parameters Abhi wants = the objective measurements vs clinicians assessment
+
+colnames(serum_filter)
+
+# only av cytokines no Th
+
+serum_select <- serum_filter[c(1,5,21,87, 9,10,33,39:44, 50:54,57,60:62,64,70:72)]
+
+colnames(serum_select)
+
+# then we add the prefix to the columns we will use for volcano.
+colnames(serum_select)[5:26] <- paste(colnames(serum_select[,c(5:26)]),"forvolcano",sep = "_")
+
+unique(serum_select$`Discovery_Validation`)
+unique(serum_select$`OUTCOME_3`)
+unique(serum_select$`group_IP10`)
+
+
+###########Subset into the groups that we will compare
+
+Ward  <- serum_select %>% 
+  dplyr::filter(OUTCOME_3%in%c("Ward"))
+
+Ward_Discovery  <- Ward %>% 
+  dplyr::filter(Discovery_Validation%in%c("Discovery"))
+
+Ward_Validation  <- Ward %>% 
+  dplyr::filter(Discovery_Validation%in%c("Validation"))
+
+Deterioration  <- serum_select %>% 
+  dplyr::filter(OUTCOME_3%in%c("Deterioration"))
+
+Deterioration_Discovery  <- Deterioration %>% 
+  dplyr::filter(Discovery_Validation%in%c("Discovery"))
+
+Deterioration_Validation  <- Deterioration %>% 
+  dplyr::filter(Discovery_Validation%in%c("Validation"))
+
+##
+LowIP10  <- serum_select %>% 
+  dplyr::filter(group_IP10%in%c("Low"))
+
+LowIP10_Discovery  <- LowIP10 %>% 
+  dplyr::filter(Discovery_Validation%in%c("Discovery"))
+
+LowIP10_Validation  <- LowIP10 %>% 
+  dplyr::filter(Discovery_Validation%in%c("Validation"))
+
+HighIP10  <- serum_select %>% 
+  dplyr::filter(group_IP10%in%c("High"))
+
+HighIP10_Discovery  <- HighIP10 %>% 
+  dplyr::filter(Discovery_Validation%in%c("Discovery"))
+
+HighIP10_Validation  <- HighIP10 %>% 
+  dplyr::filter(Discovery_Validation%in%c("Validation"))
+
+#####
+
+Ward_high_IP10  <- serum_select %>% 
+  dplyr::filter(group_IP10%in%c("High")) %>% 
+  dplyr::filter(OUTCOME_3%in%c("Ward"))
+
+Deterioration_high_IP10  <- serum_select %>% 
+  dplyr::filter(group_IP10%in%c("High")) %>% 
+  dplyr::filter(OUTCOME_3%in%c("Deterioration"))
+
+
+
+##create the loop to calculate the means of all of the parameters with _forvolcano for the groups above
+
+for(your_param in grep("_forvolcano", colnames(serum_select), value=TRUE)){   
+  
+  #call your parameter 
+  forcalc_Ward <-Ward %>%select(your_param)
+  forcalc_Ward_Discovery <-Ward_Discovery %>%select(your_param)
+  forcalc_Ward_Validation <-Ward_Validation %>%select(your_param)
+  forcalc_Deterioration <-Deterioration %>%select(your_param)
+  forcalc_Deterioration_Discovery <-Deterioration_Discovery %>%select(your_param)
+  forcalc_Deterioration_Validation <-Deterioration_Validation %>%select(your_param)
+  
+  forcalc_LowIP10 <-LowIP10 %>%select(your_param)
+  forcalc_LowIP10_Discovery <-LowIP10_Discovery %>%select(your_param)
+  forcalc_LowIP10_Validation <-LowIP10_Validation %>%select(your_param)
+  forcalc_HighIP10 <-HighIP10 %>%select(your_param)
+  forcalc_HighIP10_Discovery <-HighIP10_Discovery %>%select(your_param)
+  forcalc_HighIP10_Validation <-HighIP10_Validation %>%select(your_param)
+  forcalc_Ward_high_IP10 <-Ward_high_IP10%>%select(your_param)
+  forcalc_HighIP10_Validation <-HighIP10_Validation %>%select(your_param)
+  
+  forcalc_Ward_high_IP10 <-Ward_high_IP10 %>%select(your_param)
+  forcalc_Deterioration_high_IP10 <-Deterioration_high_IP10 %>%select(your_param)
+  
+  print(your_param)
+  
+  ###need to add the [1] because it thinks it's a data table vs a vector. Also need to drop the NA, otherwise the mean will be NA
+  
+  # calculate mean
+  mean_Ward<-mean(forcalc_Ward[[1]],na.rm = TRUE) 
+  mean_Ward_Discovery<-mean(forcalc_Ward_Discovery[[1]],na.rm = TRUE) 
+  mean_Ward_Validation<-mean(forcalc_Ward_Validation[[1]],na.rm = TRUE) 
+  mean_Deterioration<-mean(forcalc_Deterioration[[1]],na.rm = TRUE) 
+  mean_Deterioration_Discovery<-mean(forcalc_Deterioration_Discovery[[1]],na.rm = TRUE) 
+  mean_Deterioration_Validation<-mean(forcalc_Deterioration_Validation[[1]],na.rm = TRUE) 
+  
+  mean_LowIP10<-mean(forcalc_LowIP10[[1]],na.rm = TRUE) 
+  mean_LowIP10_Discovery<-mean(forcalc_LowIP10_Discovery[[1]],na.rm = TRUE) 
+  mean_LowIP10_Validation<-mean(forcalc_LowIP10_Validation[[1]],na.rm = TRUE) 
+  mean_HighIP10<-mean(forcalc_HighIP10[[1]],na.rm = TRUE) 
+  mean_HighIP10_Discovery<-mean(forcalc_HighIP10_Discovery[[1]],na.rm = TRUE) 
+  mean_HighIP10_Validation<-mean(forcalc_HighIP10_Validation[[1]],na.rm = TRUE) 
+  
+  mean_Ward_high_IP10<-mean(forcalc_Ward_high_IP10[[1]],na.rm = TRUE) 
+  mean_Deterioration_high_IP10<-mean(forcalc_Deterioration_high_IP10[[1]],na.rm = TRUE) 
+  
+  # calculate SD 
+  sd_Ward<-sd(forcalc_Ward[[1]],na.rm = TRUE) 
+  sd_Ward_Discovery<-sd(forcalc_Ward_Discovery[[1]],na.rm = TRUE) 
+  sd_Ward_Validation<-sd(forcalc_Ward_Validation[[1]],na.rm = TRUE) 
+  sd_Deterioration<-sd(forcalc_Deterioration[[1]],na.rm = TRUE) 
+  sd_Deterioration_Discovery<-sd(forcalc_Deterioration_Discovery[[1]],na.rm = TRUE) 
+  sd_Deterioration_Validation<-sd(forcalc_Deterioration_Validation[[1]],na.rm = TRUE) 
+  
+  sd_LowIP10<-sd(forcalc_LowIP10[[1]],na.rm = TRUE) 
+  sd_LowIP10_Discovery<-sd(forcalc_LowIP10_Discovery[[1]],na.rm = TRUE) 
+  sd_LowIP10_Validation<-sd(forcalc_LowIP10_Validation[[1]],na.rm = TRUE) 
+  sd_HighIP10<-sd(forcalc_HighIP10[[1]],na.rm = TRUE) 
+  sd_HighIP10_Discovery<-sd(forcalc_HighIP10_Discovery[[1]],na.rm = TRUE) 
+  sd_HighIP10_Validation<-sd(forcalc_HighIP10_Validation[[1]],na.rm = TRUE) 
+  
+  sd_Ward_high_IP10<-sd(forcalc_Ward_high_IP10[[1]],na.rm = TRUE) 
+  sd_Deterioration_high_IP10<-sd(forcalc_Deterioration_high_IP10[[1]],na.rm = TRUE) 
+  
+  # Calculate the t-tests
+  #this is so if there are not enough values for a t-test, it says NA instead of failing
+  failproof.t <- possibly(t.test, NA_real_, quiet = T) 
+  
+  #the issue is that the loop will break when the T.test is NA because there is no p-value to retrieve, so we need to do an if loop so if it is NA the p-value will be 1
+  
+  if(is.na(failproof.t(forcalc_Ward,forcalc_Deterioration, alternative = "two.sided", var.equal = FALSE))){ 
+    pval_Ward_Deterioration <- print("1")
+  }else{
+    pval_Ward_Deterioration <- failproof.t(forcalc_Ward,forcalc_Deterioration, alternative = "two.sided", var.equal = FALSE,)[["p.value"]] 
+  }
+ 
+  if(is.na(failproof.t(forcalc_Ward_Discovery,forcalc_Deterioration_Discovery, alternative = "two.sided", var.equal = FALSE))){ 
+    pval_Ward_Deterioration_Discovery <- print("1")
+  }else{
+    pval_Ward_Deterioration_Discovery <- failproof.t(forcalc_Ward_Discovery,forcalc_Deterioration_Discovery, alternative = "two.sided", var.equal = FALSE,)[["p.value"]] 
+  }
+  
+  if(is.na(failproof.t(forcalc_Ward_Validation, forcalc_Deterioration_Validation, alternative = "two.sided", var.equal = FALSE))){ 
+    pval_Ward_Deterioration_Validation <- print("1")
+  }else{
+    pval_Ward_Deterioration_Validation <- failproof.t(forcalc_Ward_Validation, forcalc_Deterioration_Validation, alternative = "two.sided", var.equal = FALSE,)[["p.value"]] 
+  }
+  
+  if(is.na(failproof.t(forcalc_LowIP10,forcalc_HighIP10, alternative = "two.sided", var.equal = FALSE))){ 
+    pval_LowIP10_HighIP10 <- print("1")
+  }else{
+    pval_LowIP10_HighIP10 <- failproof.t(forcalc_LowIP10,forcalc_HighIP10, alternative = "two.sided", var.equal = FALSE,)[["p.value"]] 
+  }
+  
+  if(is.na(failproof.t(forcalc_LowIP10_Discovery,forcalc_HighIP10_Discovery, alternative = "two.sided", var.equal = FALSE))){ 
+    pval_LowIP10_HighIP10_Discovery <- print("1")
+  }else{
+    pval_LowIP10_HighIP10_Discovery <- failproof.t(forcalc_LowIP10_Discovery,forcalc_HighIP10_Discovery, alternative = "two.sided", var.equal = FALSE,)[["p.value"]] 
+  }
+  
+  if(is.na(failproof.t(forcalc_LowIP10_Validation, forcalc_HighIP10_Validation, alternative = "two.sided", var.equal = FALSE))){ 
+    pval_LowIP10_HighIP10_Validation <- print("1")
+  }else{
+    pval_LowIP10_HighIP10_Validation <- failproof.t(forcalc_LowIP10_Validation, forcalc_HighIP10_Validation, alternative = "two.sided", var.equal = FALSE,)[["p.value"]] 
+  }
+  
+  if(is.na(failproof.t(forcalc_Ward_high_IP10, forcalc_Deterioration_high_IP10, alternative = "two.sided", var.equal = FALSE))){ 
+    pval_Ward_Deterioration_HighIP10 <- print("1")
+  }else{
+    pval_Ward_Deterioration_HighIP10 <- failproof.t(forcalc_Ward_high_IP10, forcalc_Deterioration_high_IP10, alternative = "two.sided", var.equal = FALSE,)[["p.value"]] 
+  }
+  
+  
+
+  
+  all_calc_test <- cbind(mean_Ward,mean_Ward_Discovery, mean_Ward_Validation,mean_Deterioration,mean_Deterioration_Discovery,mean_Deterioration_Validation, 
+                         mean_LowIP10,mean_LowIP10_Discovery, mean_LowIP10_Validation,mean_HighIP10,mean_HighIP10_Discovery,mean_HighIP10_Validation,
+                         mean_Ward_high_IP10, mean_Deterioration_high_IP10,
+                         sd_Ward,sd_Ward_Discovery, sd_Ward_Validation,sd_Deterioration,sd_Deterioration_Discovery,sd_Deterioration_Validation, 
+                         sd_Ward_high_IP10, sd_Deterioration_high_IP10,
+                         sd_LowIP10,sd_LowIP10_Discovery, sd_LowIP10_Validation,sd_HighIP10,sd_HighIP10_Discovery,sd_HighIP10_Validation,
+                         pval_Ward_Deterioration,pval_Ward_Deterioration_Discovery,pval_Ward_Deterioration_Validation,
+                         pval_LowIP10_HighIP10,pval_LowIP10_HighIP10_Discovery,pval_LowIP10_HighIP10_Validation, pval_Ward_Deterioration_HighIP10)
+  
+  write.table(all_calc_test ,file="Discovery_vs_validation_new_v3.csv", append=TRUE,sep=",",col.names=FALSE,row.names=print(your_param)) 
+}
+
+#note I can't seem to assign a name to the column (col.names=TRUE) without it appearing after every entry (so every other row), so I will save it now and add it after reading
+
+#read file and assign the columns a name
+means <- read_csv("Discovery_vs_validation_new_v3.csv", col_names = c("Parameter", "mean_Ward","mean_Ward_Discovery", "mean_Ward_Validation","mean_Deterioration","mean_Deterioration_Discovery","mean_Deterioration_Validation", "mean_LowIP10","mean_LowIP10_Discovery", "mean_LowIP10_Validation","mean_HighIP10","mean_HighIP10_Discovery","mean_HighIP10_Validation", "mean_Ward_high_IP10", "mean_Deterioration_high_IP10","sd_Ward","sd_Ward_Discovery", "sd_Ward_Validation","sd_Deterioration","sd_Deterioration_Discovery","sd_Deterioration_Validation", "sd_LowIP10","sd_LowIP10_Discovery", "sd_LowIP10_Validation","sd_HighIP10","sd_HighIP10_Discovery","sd_HighIP10_Validation","sd_Ward_high_IP10", "sd_Deterioration_high_IP10",
+"pval_Ward_Deterioration","pval_Ward_Deterioration_Discovery","pval_Ward_Deterioration_Validation","pval_LowIP10_HighIP10","pval_LowIP10_HighIP10_Discovery","pval_LowIP10_HighIP10_Validation","pval_Ward_Deterioration_HighIP10"))
+
+colnames(means)
+
+#We are ready to calculate.
+#log2 fold-change is log2(mean(post)/mean(pre))
+
+means_FC  <- means %>% 
+  dplyr::mutate(log2FC_Ward_Deterioration=log2(mean_Deterioration/mean_Ward))%>%
+  dplyr::mutate(log2FC_Ward_Deterioration_Discovery=log2(mean_Deterioration_Discovery/mean_Ward_Discovery))%>% 
+  dplyr::mutate(log2FC_Ward_Deterioration_Validation=log2(mean_Deterioration_Validation/mean_Ward_Validation))%>%
+  dplyr::mutate(log2FC_LowIP10_HighIP10=log2(mean_HighIP10/mean_LowIP10))%>%
+  dplyr::mutate(log2FC_LowIP10_HighIP10_Discovery=log2(mean_HighIP10_Discovery/mean_LowIP10_Discovery))%>% 
+  dplyr::mutate(log2FC_LowIP10_HighIP10_Validation=log2(mean_HighIP10_Validation/mean_LowIP10_Validation))%>%
+  dplyr::mutate(log2FC_Ward_Deterioration_HighIP10=log2(mean_Deterioration_high_IP10/mean_Ward_high_IP10))
+
+means_FC_clean = means_FC %>%
+  mutate(Parameter = gsub("*_forvolcano","",Parameter))
+
+print(means_FC_clean$Parameter)
+
+write.table(means_FC_clean,file="all_calc_test_new_v3.csv", append=FALSE,sep=",",col.names=TRUE,row.names=FALSE) 
+
+
+
+###Part 4: the volcano plot
+
+means_FC_clean <-read_csv("all_calc_test_new_v3.csv")
+
+colnames(means_FC_clean)
+
+#volcano plot
+a <- EnhancedVolcano(means_FC_clean,
+                     lab = means_FC_clean$Parameter,
+                     x = 'log2FC_Ward_Deterioration',
+                     y = 'pval_Ward_Deterioration',
+                     title = "Ward (n=288) vs Deterioration (n=166)",
+                     selectLab = c('admission_NEWS2_score', 'AV_IP10', 'albumin', 'CRP', 'neut','AV_IL10','AV_IL6','lymph','AV_TNFa'),
+                     pCutoff = 0.05,
+                     FCcutoff = 0.4854268,
+                     ylim = c(0,30),
+                     xlim = c(-2.5,2.5),
+                     pointSize = 5.0,
+                     labSize = 6.0,
+                     titleLabSize = 16,
+                     subtitleLabSize = 1,
+                     captionLabSize = 12,
+                     axisLabSize = 12,
+                     legendLabSize = 8,
+                     legendIconSize = 3,
+                     subtitle = FALSE,
+                     border = 'full',
+                     drawConnectors = FALSE,
+                     typeConnectors = "open",
+                     widthConnectors = 0.2,
+                     gridlines.minor = FALSE,
+                     gridlines.major = FALSE,
+                     lengthConnectors= unit(0.01, "npc"),
+                     colConnectors = 'grey30')
+print(a)
+
+ggsave("Volcano_Ward_Deterioration BIG NEW.pdf", width = 25, height = 25, units = "cm")
+
+b <- EnhancedVolcano(means_FC_clean,
+                     lab = means_FC_clean$Parameter,
+                     x = 'log2FC_Ward_Deterioration_Discovery',
+                     y = 'pval_Ward_Deterioration_Discovery',
+                     title = "Discovery cohort: Ward (n=151) vs Deterioration (n=127)",
+                     selectLab = c('admission_NEWS2_score', 'AV_IP10', 'albumin', 'CRP', 'neut','AV_IL10','AV_IFNg','AV_IL6','lymph','Platelets'),
+                     pCutoff = 0.05,
+                     FCcutoff = 0.4854268,
+                     ylim = c(0,20),
+                     xlim = c(-2,2),
+                     pointSize = 5.0,
+                     labSize = 6.0,
+                     titleLabSize = 16,
+                     subtitleLabSize = 1,
+                     captionLabSize = 12,
+                     axisLabSize = 12,
+                     legendLabSize = 8,
+                     legendIconSize = 3,
+                     subtitle = FALSE,
+                     border = 'full',
+                     drawConnectors = FALSE,
+                     typeConnectors = "open",
+                     widthConnectors = 0.2,
+                     gridlines.minor = FALSE,
+                     gridlines.major = FALSE,
+                     lengthConnectors= unit(0.01, "npc"),
+                     colConnectors = 'grey30')
+print(b)
+
+ggsave("volcano_Ward_Deterioration_discovery BIG NEW.pdf", width = 25, height = 25, units = "cm")
+
+c <- EnhancedVolcano(means_FC_clean,
+                     lab = means_FC_clean$Parameter,
+                     x = 'log2FC_Ward_Deterioration_Validation',
+                     y = 'pval_Ward_Deterioration_Validation',
+                     title = "Validation cohort: Ward (n=137) vs Deterioration (n=39)",
+                     selectLab = c('admission_NEWS2_score', 'AV_IP10', 'albumin', 'CRP', 'neut','AV_IL10','AV_IFNL1','creat','lymph','Age'),
+                     pCutoff = 0.05,
+                     FCcutoff = 0.4854268,
+                     ylim = c(0,10),
+                     xlim = c(-3,3),
+                     pointSize = 5.0,
+                     labSize = 6.0,
+                     titleLabSize = 16,
+                     subtitleLabSize = 1,
+                     captionLabSize = 12,
+                     axisLabSize = 12,
+                     legendLabSize = 8,
+                     legendIconSize = 3,
+                     subtitle = FALSE,
+                     border = 'full',
+                     drawConnectors = FALSE,
+                     typeConnectors = "open",
+                     widthConnectors = 0.2,
+                     gridlines.minor = FALSE,
+                     gridlines.major = FALSE,
+                     lengthConnectors= unit(0.01, "npc"),
+                     colConnectors = 'grey30')
+print(c)
+
+ggsave("volcano_Ward_Deterioration_validation BIG NEW.pdf", width = 25, height = 25, units = "cm")
+
+#
+colnames(means_FC_clean)
+
+d <- EnhancedVolcano(means_FC_clean,
+                     lab = means_FC_clean$Parameter,
+                     x = 'log2FC_LowIP10_HighIP10',
+                     y = 'pval_LowIP10_HighIP10',
+                     title = "Low IP-10 (n=306) vs High IP-10 (n=148)",
+                     selectLab = c('admission_NEWS2_score', 'AV_IP10', 'CRP', 'neut','AV_IL10','lymph','Platelets','creat','BMI','AV_IFNL1','AV_IFNa2'),
+                     pCutoff = 0.05,
+                     FCcutoff = 0.4854268,
+                     ylim = c(0,15),
+                     xlim = c(-2,2),
+                     pointSize = 5.0,
+                     labSize = 6.0,
+                     titleLabSize = 16,
+                     subtitleLabSize = 1,
+                     captionLabSize = 12,
+                     axisLabSize = 12,
+                     legendLabSize = 8,
+                     legendIconSize = 3,
+                     subtitle = FALSE,
+                     border = 'full',
+                     drawConnectors = FALSE,
+                     typeConnectors = "open",
+                     widthConnectors = 0.2,
+                     gridlines.minor = FALSE,
+                     gridlines.major = FALSE,
+                     lengthConnectors= unit(0.01, "npc"),
+                     colConnectors = 'grey30')
+print(d)
+
+ggsave("Volcano_LowIP10_HighIP10 BIG.pdf", width = 25, height = 25, units = "cm")
+
+e <- EnhancedVolcano(means_FC_clean,
+                     lab = means_FC_clean$Parameter,
+                     x = 'log2FC_LowIP10_HighIP10_Discovery',
+                     y = 'pval_LowIP10_HighIP10_Discovery',
+                     selectLab = c('admission_NEWS2_score', 'AV_IP10', 'CRP','AV_IL10','lymph','Platelets','creat','AV_IFNa2'),
+                     title = "Discovery cohort: Low IP-10 (n=198) vs High IP-10 (n=80)",
+                     pCutoff = 0.05,
+                     FCcutoff = 0.4854268,
+                     ylim = c(0,30),
+                     xlim = c(-2.5,2.5),
+                     pointSize = 5.0,
+                     labSize = 6.0,
+                     titleLabSize = 16,
+                     subtitleLabSize = 1,
+                     captionLabSize = 12,
+                     axisLabSize = 12,
+                     legendLabSize = 8,
+                     legendIconSize = 3,
+                     subtitle = FALSE,
+                     border = 'full',
+                     drawConnectors = FALSE,
+                     typeConnectors = "open",
+                     widthConnectors = 0.2,
+                     gridlines.minor = FALSE,
+                     gridlines.major = FALSE,
+                     lengthConnectors= unit(0.01, "npc"),
+                     colConnectors = 'grey30')
+print(e)
+
+ggsave("volcano_LowIP10_HighIP10_discovery BIG.pdf", width = 25, height = 25, units = "cm")
+
+f <- EnhancedVolcano(means_FC_clean,
+                     lab = means_FC_clean$Parameter,
+                     x = 'log2FC_LowIP10_HighIP10_Validation',
+                     y = 'pval_LowIP10_HighIP10_Validation',
+                     selectLab = c('admission_NEWS2_score', 'AV_IP10', 'CRP', 'AV_IL10','lymph','Platelets','creat','AV_IFNL1','AV_IFNb'),
+                     title = "Validation cohort: Low IP-10 (n=108) vs High IP-10 (n=68)",
+                     pCutoff = 0.05,
+                     FCcutoff = 0.4854268,
+                     ylim = c(0,20),
+                     xlim = c(-3,3),
+                     pointSize = 5.0,
+                     labSize = 6.0,
+                     titleLabSize = 16,
+                     subtitleLabSize = 1,
+                     captionLabSize = 12,
+                     axisLabSize = 12,
+                     legendLabSize = 8,
+                     legendIconSize = 3,
+                     subtitle = FALSE,
+                     border = 'full',
+                     drawConnectors = FALSE,
+                     typeConnectors = "open",
+                     widthConnectors = 0.2,
+                     gridlines.minor = FALSE,
+                     gridlines.major = FALSE,
+                     lengthConnectors= unit(0.01, "npc"),
+                     colConnectors = 'grey30')
+print(f)
+
+ggsave("volcano_LowIP10_HighIP10_Validation BIG.pdf", width = 25, height = 25, units = "cm")
+
+
+g <- EnhancedVolcano(means_FC_clean,
+                     lab = means_FC_clean$Parameter,
+                     x = 'log2FC_Ward_Deterioration_HighIP10',
+                     y = 'pval_Ward_Deterioration_HighIP10',
+                     title = "Ward high IP-10 (n=66) vs Deterioration high IP-10 (n=82)",
+                     selectLab = c('admission_NEWS2_score',  'CRP', 'albumin', 'AV_IL10','neut','AV_IP10','AV_IL10','AV_IL6','AV_IFNg'),
+                     pCutoff = 0.05,
+                     FCcutoff = 0.4854268,
+                     ylim = c(0,20),
+                     xlim = c(-3,3),
+                     pointSize = 5.0,
+                     labSize = 6.0,
+                     titleLabSize = 16,
+                     subtitleLabSize = 1,
+                     captionLabSize = 12,
+                     axisLabSize = 12,
+                     legendLabSize = 8,
+                     legendIconSize = 3,
+                     subtitle = FALSE,
+                     border = 'full',
+                     drawConnectors = FALSE,
+                     typeConnectors = "open",
+                     widthConnectors = 0.2,
+                     gridlines.minor = FALSE,
+                     gridlines.major = FALSE,
+                     lengthConnectors= unit(0.01, "npc"),
+                     colConnectors = 'grey30')
+print(g)
+
+ggsave("volcano_Ward_Deterioration_HighIP10 BIG.pdf", width = 25, height = 25, units = "cm")
+
+dev.off()
+
