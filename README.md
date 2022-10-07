@@ -1,6 +1,3 @@
-# Welcome to GitHub Desktop!
+# Volcano plots of LegendPlex data
 
-This is your README. READMEs are where you can communicate what your project is and how to use it.
-
-Write your name on line 6, save it, and then head back to GitHub Desktop.
-Irene
+This is some code I wrote to compare cytokine data from different cohorts using a volcano plot.
